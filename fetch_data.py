@@ -4,67 +4,22 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# 利用正则表达式进行日期的匹配，只需要将随便写个日期就可以，只要是连续的8个数字就行
 SQL = '''
-select date,hour,dest_ip,sum(total_ul_delay_cnt+total_dl_delay_cnt) total_rtt_cnt,
-round(sum(total_ul_rtt)/sum(total_ul_delay_cnt),0) as ul_avg_rtt,round(sum(total_dl_rtt)/sum(total_dl_delay_cnt),0) as dl_avg_rtt,
-round(sum(total_ul_loss_pkt)*100.0/sum(total_ul_pkt),2) ul_loss_ratio,round(sum(total_dl_loss_pkt)*100.0/sum(total_dl_pkt),2) dl_loss_ratio,
-round(sum(total_ul_retrans_pkt)*100.0/sum(total_ul_pkt),2) ul_retrans_ratio,round(sum(total_dl_retrans_pkt)*100.0/sum(total_dl_pkt),2) dl_retrans_ratio,
-round(sum(total_ul_traffic)*8000/sum(total_ul_duration)/1024,2) avg_ul_throughput,
-round(sum(total_dl_traffic)*8000/sum(total_dl_duration)/1024,2) avg_dl_throughput from (
-select 
-date(start_time) date,hour(start_time) hour,dest_ip,sum(ul_loss_pkt)  total_ul_loss_pkt,
-sum(dl_loss_pkt)  total_dl_loss_pkt,
-sum(ul_retrans_pkt)  total_ul_retrans_pkt,
-sum(dl_retrans_pkt)  total_dl_retrans_pkt,
-sum(ul_pkt) total_ul_pkt,
-sum(dl_pkt) total_dl_pkt,
-sum(ul_avg_rtt*ul_delay_cnt) as total_ul_rtt,
-sum(ul_delay_cnt) as total_ul_delay_cnt,
-sum(dl_avg_rtt*dl_delay_cnt) as total_dl_rtt,
-sum(dl_delay_cnt) as total_dl_delay_cnt,
-sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_traffic else 0 end) as total_ul_traffic,
-sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_usage_time else 0 end) as total_ul_duration,
-sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_traffic else 0 end) as total_dl_traffic,
-sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_usage_time else 0 end) as total_dl_duration
-from db_fact_psup_http_11111111 where l4protocol_id=0 and service_id=8
-group by date,hour,dest_ip
-union all
-select 
-date(start_time) date,hour(start_time) hour,dest_ip,sum(ul_loss_pkt)  total_ul_loss_pkt,
-sum(dl_loss_pkt)  total_dl_loss_pkt,
-sum(ul_retrans_pkt)  total_ul_retrans_pkt,
-sum(dl_retrans_pkt)  total_dl_retrans_pkt,
-sum(ul_pkt) total_ul_pkt,
-sum(dl_pkt) total_dl_pkt,
-sum(ul_avg_rtt*ul_delay_cnt) as total_ul_rtt,
-sum(ul_delay_cnt) as total_ul_delay_cnt,
-sum(dl_avg_rtt*dl_delay_cnt) as total_dl_rtt,
-sum(dl_delay_cnt) as total_dl_delay_cnt,
-sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_traffic else 0 end) as total_ul_traffic,
-sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_usage_time else 0 end) as total_ul_duration,
-sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_traffic else 0 end) as total_dl_traffic,
-sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_usage_time else 0 end) as total_dl_duration
-from db_fact_psup_https_11111111 where l4protocol_id=0 and service_id=8
-group by date,hour,dest_ip
-union all
-select 
-date(start_time) date,hour(start_time) hour,dest_ip,sum(ul_loss_pkt)  total_ul_loss_pkt,
-sum(dl_loss_pkt)  total_dl_loss_pkt,
-sum(ul_retrans_pkt)  total_ul_retrans_pkt,
-sum(dl_retrans_pkt)  total_dl_retrans_pkt,
-sum(ul_pkt) total_ul_pkt,
-sum(dl_pkt) total_dl_pkt,
-sum(ul_avg_rtt*ul_delay_cnt) as total_ul_rtt,
-sum(ul_delay_cnt) as total_ul_delay_cnt,
-sum(dl_avg_rtt*dl_delay_cnt) as total_dl_rtt,
-sum(dl_delay_cnt) as total_dl_delay_cnt,
-sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_traffic else 0 end) as total_ul_traffic,
-sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_usage_time else 0 end) as total_ul_duration,
-sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_traffic else 0 end) as total_dl_traffic,
-sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_usage_time else 0 end) as total_dl_duration
-from db_fact_psup_flow_11111111 where l4protocol_id=0 and service_id=8
-group by date,hour,dest_ip
-)a group by date,hour,dest_ip
+select date,dest_ip,
+round(total_ul_traffic*8000/total_ul_duration/1024,0) 'ul thp(kbps)',
+round(total_dl_traffic*8000/total_dl_duration/1024,0) 'dl thp(kbps)'
+from(
+select date(start_time) date,dest_ip,
+sum(case when ul_usage_time>0 then ul_traffic else 0 end) total_ul_traffic,
+sum(case when ul_usage_time>0 then ul_usage_time else 0 end) total_ul_duration,
+sum(case when dl_usage_time>0 then dl_traffic else 0 end) total_dl_traffic,
+sum(case when dl_usage_time>0 then dl_usage_time else 0 end) total_dl_duration
+from db_fact_psup_flow_20210101 
+where source_ip in (select ip from dim_enodebip_inner where city_id=910)
+and service_id=13 and subservice_id=76923 
+group by date,dest_ip
+)a
 '''
 
 
@@ -91,7 +46,7 @@ def get_sql_list(date_list):
 
 def execute_sql(SQL):
     # 处理sql语句的函数,返回处理后的数据,以data_frame格式返回
-    conn = ps.connect(host='10.120.7.196', port=5258, user='gbase', password='ZXvmax_2017',
+    conn = ps.connect(host='10.245.146.71', port=5258, user='gbase', password='ZXvmax_2017',
                       database='zxvmax', charset='utf8mb4', autocommit=True)
 
     cursor = conn.cursor()
@@ -133,7 +88,9 @@ def write_excel(dataframe):
 
 
 if __name__ == '__main__':
-    date_list = get_time_range('20211001', '20211020')
+    # 需要提取的日期，可以提取到开始时间和结束时间
+    date_list = get_time_range('20211001', '20211108')
     sql_list = get_sql_list(date_list)
     print('----------开始取数据----------')
-    threadpool_execute_data(sql_list, 10)
+    # 利用线程池执行sql语句，7代表同时开启7个线程并发取数据，可以自己定义
+    threadpool_execute_data(sql_list, 7)
