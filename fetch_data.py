@@ -6,20 +6,48 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 利用正则表达式进行日期的匹配，只需要将随便写个日期就可以，只要是连续的8个数字就行
 SQL = '''
-select date,dest_ip,
-round(total_ul_traffic*8000/total_ul_duration/1024,0) 'ul thp(kbps)',
-round(total_dl_traffic*8000/total_dl_duration/1024,0) 'dl thp(kbps)'
-from(
-select date(start_time) date,dest_ip,
-sum(case when ul_usage_time>0 then ul_traffic else 0 end) total_ul_traffic,
-sum(case when ul_usage_time>0 then ul_usage_time else 0 end) total_ul_duration,
-sum(case when dl_usage_time>0 then dl_traffic else 0 end) total_dl_traffic,
-sum(case when dl_usage_time>0 then dl_usage_time else 0 end) total_dl_duration
-from db_fact_psup_flow_20210101 
-where source_ip in (select ip from dim_enodebip_inner where city_id=910)
-and service_id=13 and subservice_id=76923 
-group by date,dest_ip
-)a
+select date,appname,dest_ip,sum(time) times,
+round(sum(total_ul_rtt)/sum(total_ul_delay_cnt),0) as ul_avg_rtt,
+round(sum(total_dl_rtt)/sum(total_dl_delay_cnt),0) as dl_avg_rtt,
+round(sum(total_ul_loss_pkt)*100.0/sum(total_ul_pkt),2) ul_loss_ratio,
+round(sum(total_dl_loss_pkt)*100.0/sum(total_dl_pkt),2) dl_loss_ratio,
+round(sum(total_ul_retrans_pkt)*100.0/sum(total_ul_pkt),2) ul_retrans_ratio,
+round(sum(total_dl_retrans_pkt)*100.0/sum(total_dl_pkt),2) dl_retrans_ratio,
+round(sum(total_ul_traffic)*8000/sum(total_ul_duration)/1024,2) avg_ul_throughput,
+round(sum(total_dl_traffic)*8000/sum(total_dl_duration)/1024,2) avg_dl_throughput,
+round(sum(total_tcp_resp_delay)/sum(total_tcp_resp_cnt),2) as tcp_step12_latency,
+round(sum(total_tcp_ack_delay)/sum(total_tcp_ack_cnt),2) as tcp_step23_latency,
+round(sum(TCP12_suc)/sum(TCP12_req),2) TCP12_suc_rat,
+round(sum(TCP23_suc)/sum(TCP23_req),2) TCP23_suc_rat
+from (
+select date(start_time) date,service_id||','||subservice_id id,dest_ip,count(*) time,
+sum(ul_loss_pkt)  total_ul_loss_pkt,
+sum(dl_loss_pkt)  total_dl_loss_pkt,
+sum(ul_retrans_pkt)  total_ul_retrans_pkt,
+sum(dl_retrans_pkt)  total_dl_retrans_pkt,
+sum(ul_pkt) total_ul_pkt,
+sum(dl_pkt) total_dl_pkt,
+sum(ul_avg_rtt*ul_delay_cnt) as total_ul_rtt,
+sum(ul_delay_cnt) as total_ul_delay_cnt,
+sum(dl_avg_rtt*dl_delay_cnt) as total_dl_rtt,
+sum(dl_delay_cnt) as total_dl_delay_cnt,
+sum(tcp_resp_delay*tcp_resp_cnt) as total_tcp_resp_delay,
+sum(tcp_resp_cnt) as total_tcp_resp_cnt,
+sum(tcp_ack_delay*tcp_ack_cnt) as total_tcp_ack_delay,
+sum(tcp_ack_cnt) as total_tcp_ack_cnt,
+sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_traffic else 0 end) as total_ul_traffic,
+sum(case when ul_traffic>1024*1024 and ul_usage_time>0 then ul_usage_time else 0 end) as total_ul_duration,
+sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_traffic else 0 end) as total_dl_traffic,
+sum(case when dl_traffic>2*1024*1024 and dl_usage_time>0 then dl_usage_time else 0 end) as total_dl_duration,
+sum(case when l4protocol_id = 0  and synack_status in (0, 1) then 1 else 0 end) TCP12_req,
+sum(case when l4protocol_id = 0  and synack_status = 0 then 1 else 0 end) TCP12_suc,
+sum(case when l4protocol_id = 0 and ack_status in (0, 1) then 1 else 0 end) TCP23_req,
+sum(case when l4protocol_id = 0  and ack_status = 0 then 1 else 0 end) TCP23_suc
+from db_fact_psup_https_20211001 where l4protocol_id=0  and source_ip in (select ip from dim_enodebip_inner where city_id=910)
+and dest_ip like '10.%'
+group by date,id,dest_ip
+)a  left join dim_service_new_ b on a.id=b.id
+group by date,appname,dest_ip
 '''
 
 
@@ -34,7 +62,7 @@ def get_time_range(start_time, end_time):
 
 def replace_sql_date(SQL, day):
     # 将sql语句中的日期取代为day
-    day_sql = re.sub('\d{8}', day, SQL)
+    day_sql = re.sub('(db_fact_\w*)(\d{8})', lambda x: x.group(1) + day, SQL)
     return day_sql
 
 
@@ -89,7 +117,7 @@ def write_excel(dataframe):
 
 if __name__ == '__main__':
     # 需要提取的日期，可以提取到开始时间和结束时间
-    date_list = get_time_range('20211001', '20211108')
+    date_list = get_time_range('20211025', '20211111')
     sql_list = get_sql_list(date_list)
     print('----------开始取数据----------')
     # 利用线程池执行sql语句，7代表同时开启7个线程并发取数据，可以自己定义
