@@ -9,13 +9,11 @@ select date, hour, count(distinct(imsi)) as user_num from
 (
 select date(start_time) as date, hour(start_time) as hour,imsi
 from db_fact_psup_http_20211111
-where cell in (select eci from temp_sport_cell_scene where site_name in ('JAP368', 'JAP423', 'JAP194'))
-group by date, hour, imsi
+where cell in (select eci from temp_sport_cell_scene where site_name in ('JAP368', 'JAP423', 'JAP194')) group by date, hour, imsi
 union all
 select date(start_time) as date, hour(start_time) as hour,imsi
 from db_fact_psup_https_20211111
-where cell in (select eci from temp_sport_cell_scene where site_name in ('JAP368', 'JAP423', 'JAP194'))
-group by date, hour, imsi
+where cell in (select eci from temp_sport_cell_scene where site_name in ('JAP368', 'JAP423', 'JAP194')) group by date, hour, imsi
 union all
 select date(start_time) as date, hour(start_time) as hour,imsi
 from db_fact_psup_flow_20211111
@@ -37,7 +35,8 @@ def get_time_range(start_time, end_time):
 
 def replace_sql_date(SQL, day):
     # 将sql语句中的日期取代为day
-    day_sql = re.sub('(db_fact_\w*)(\d{8})', lambda x: x.group(1) + day, SQL)
+    # day_sql = re.sub('(db_fact_\w*)(\d{8})', lambda x: x.group(1) + day, SQL)
+    day_sql = re.sub('\d{8}', day, SQL)
     return day_sql
 
 
@@ -90,10 +89,18 @@ def write_excel(dataframe):
     print('----------data have writen into excel----------')
 
 
+def install_package():
+    os.system('pip install --upgrade pip')
+    os.system('pip install numpy')
+    os.system('pip install pandas')
+    os.system('pip install openpyxl')
+
+
 if __name__ == '__main__':
+    install_package()
     # this is date list,input date range that you want to fetch data.
     date_list = get_time_range('20211113', '20211113')
     sql_list = get_sql_list(date_list)
     print('----------begin to fetch data----------')
     # 利用线程池执行sql语句，7代表同时开启7个线程并发取数据，可以自己定义
-    threadpool_execute_data(sql_list, 7)
+    threadpool_execute_data(sql_list, 4)
